@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RESVG_VERSION: v0.49.0
+  RESVG_SHA256: 216637e75e909e53e3098b0875cd5f7da2fdc8b4359771b4a29b539afff9d3f5
+  # The plugin invokes the ImageMagick 7 `magick` binary; Ubuntu 24.04's apt package is 6.9 (`convert` only).
+  MAGICK_VERSION: 7.1.2-35
+  MAGICK_SHA256: f111044ed06b68cfb478df724c5a32d35145afa21073242f888d234a2f8cc002
+
+jobs:
+  test:
+    name: Neovim ${{ matrix.neovim }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        neovim: [v0.11.7, stable]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Install Neovim ${{ matrix.neovim }}
+        run: |
+          curl -fsSL "https://github.com/neovim/neovim/releases/download/${{ matrix.neovim }}/nvim-linux-x86_64.tar.gz" | sudo tar -xz --strip-components=1 -C /usr/local
+          nvim --version | head -n 1
+
+      - name: Install resvg
+        run: |
+          curl -fsSLo resvg.tar.gz "https://github.com/linebender/resvg/releases/download/${RESVG_VERSION}/resvg-linux-x86_64.tar.gz"
+          echo "${RESVG_SHA256}  resvg.tar.gz" | sha256sum -c -
+          sudo tar -xzf resvg.tar.gz -C /usr/local/bin resvg
+          rm resvg.tar.gz
+
+      - name: Install ImageMagick ${{ env.MAGICK_VERSION }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1 libx11-6 libharfbuzz0b libfribidi0
+          curl -fsSLo magick.AppImage "https://github.com/ImageMagick/ImageMagick/releases/download/${MAGICK_VERSION}/ImageMagick-${MAGICK_VERSION}-gcc-x86_64.AppImage"
+          echo "${MAGICK_SHA256}  magick.AppImage" | sha256sum -c -
+          chmod +x magick.AppImage
+          ./magick.AppImage --appimage-extract >/dev/null
+          sudo mv squashfs-root /opt/imagemagick
+          sudo ln -s /opt/imagemagick/AppRun /usr/local/bin/magick
+          rm magick.AppImage
+          magick -version | grep -q "ImageMagick ${MAGICK_VERSION}"
+
+      - run: scripts/test.sh

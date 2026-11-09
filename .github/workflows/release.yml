@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Tag must match package.json version
+        run: |
+          version="$(jq -er .version package.json)"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version v${version}"
+            exit 1
+          fi
+          # The release body is the matching CHANGELOG.md section; it must exist.
+          awk -v h="## ${version}" '$0 == h {f=1; next} /^## / {f=0} f' CHANGELOG.md | grep -q '[^[:space:]]' \
+            || { echo "::error::CHANGELOG.md has no non-empty '## ${version}' section"; exit 1; }
+
+  test:
+    name: Test
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: GitHub release
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # GitHub attaches source archives (zip, tar.gz) to every release; no binary plugin is built.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(jq -er .version package.json)"
+          awk -v h="## ${version}" '$0 == h {f=1; next} /^## / {f=0} f' CHANGELOG.md > notes.md
+          flags=()
+          case "${GITHUB_REF_NAME}" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "${GITHUB_REF_NAME}" --notes-file notes.md "${flags[@]}"

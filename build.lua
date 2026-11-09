@@ -1,0 +1,6 @@
+local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h")
+local runtime = dofile(root .. "/lua/pele_mermaid/deps/runtime.lua")
+local command, err = runtime.resolve({ renderer = { command = "bun" } })
+assert(command, err)
+local result = vim.system({ command, "install", "--frozen-lockfile" }, { cwd = root, text = true }):wait()
+assert(result.code == 0, "pele_mermaid: dependency installation failed\n" .. (result.stderr or result.stdout or ""))
